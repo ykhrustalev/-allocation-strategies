@@ -69,7 +69,7 @@ all_symbols = []
 for _slice in all_slices:
     all_symbols.extend(_slice.symbols())
 
-to_hold = defaultdict(float)
+all_symbols = list(set(all_symbols))
 
 
 class TrendFactor(CustomFactor):
@@ -135,15 +135,26 @@ def make_pipeline():
 
 
 def record_vars(context, data):
-    record(
-        positions_cnt=len(context.portfolio.positions),
-        risky=len(set(x for x in all_slices if x.is_risk)),
-    )
+    records = dict()
+
+    cpp = context.portfolio.positions
+
+    # 5 items allowed for recording only
+    for x in (
+        risky1,
+        risky2,
+        risky3,
+    ):
+        r = x.risk
+        records[r.symbol] = cpp[r].amount * cpp[r].last_sale_price / context.portfolio.portfolio_value
+
+    record(**records)
 
 
 def before_trading_start(context, data):
     context.share_for_allocation = 0.99
     context.out = algo.pipeline_output('pipeline')
+    context.to_hold = defaultdict(float)
 
 
 def check_slice(context, slice):
@@ -158,23 +169,23 @@ def check_slice(context, slice):
 
 def rebalance(context, data):
     signaled = [check_slice(context, sl) for sl in all_slices]
-    if not any(signaled):
-        return
+    if signaled:
+        log.info('signaled {}'.format(signaled))
 
-    log.info('signaled {}'.format(signaled))
+    context.to_hold = defaultdict(float)
 
-    global to_hold
-    to_hold = defaultdict(float)
+    for s in all_symbols:
+        context.to_hold[s] = 0
 
     share = 1.0 / len(all_slices)
 
     for sl in all_slices:
-        to_hold[sl.current()] += share * context.share_for_allocation
+        context.to_hold[sl.current()] += share * context.share_for_allocation
 
     allocation = sorted(["{}={}".format(k.symbol, v)
-                         for k, v in to_hold.items() if v > 0])
+                         for k, v in context.to_hold.items() if v > 0])
     log.info('allocation {}'.format(' '.join(allocation)))
 
-    for stock, weight in to_hold.items():
-        log.info("target {} {}", stock, weight)
+    for stock, weight in context.to_hold.items():
+        # log.info("target {} {}", stock, weight)
         order_target_percent(stock, weight)
